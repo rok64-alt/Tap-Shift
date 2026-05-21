@@ -1,0 +1,306 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tap Shift</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #111111;
+            font-family: Arial, sans-serif;
+            font-weight: normal;
+            color: #ffffff;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Lock to a perfect phone screen aspect ratio centered on screen */
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            max-width: 375px;
+            height: 100%;
+            max-height: 667px;
+            background-color: #000000;
+            border: 1px solid #333333;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #score {
+            font-size: 32px;
+        }
+        #overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            font-size: 18px;
+            width: 100%;
+            padding: 0 20px;
+            line-height: 1.5;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="gameContainer">
+        <div id="ui">
+            <div id="score">0</div>
+        </div>
+        <div id="overlay">Tap any section to start</div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('gameContainer');
+        const scoreElement = document.getElementById('score');
+        const overlayElement = document.getElementById('overlay');
+
+        let width, height;
+        let lineTopY, lineBottomY, laneYCoordinates;
+        
+        // Game parameters
+        let isPlaying = false;
+        let isGameOver = false;
+        let score = 0;
+        let obstacles = [];
+        let spawnTimer = 0;
+        let spawnInterval = 60;
+        let gameSpeed = 5;
+
+        // Player configuration
+        let playerLane = 1; // 0 = Top, 1 = Middle, 2 = Bottom
+        let currentPlayerY = 0; // Current smooth Y coordinate of the dot
+        const playerRadius = 15;
+        const obstacleSize = 40;
+
+        function resize() {
+            width = canvas.width = container.clientWidth;
+            height = canvas.height = container.clientHeight;
+
+            // Split the height into 3 equal lanes
+            lineTopY = height / 3;
+            lineBottomY = (height / 3) * 2;
+
+            laneYCoordinates = [
+                height / 6,          // Center of Top lane
+                height / 2,          // Center of Middle lane
+                (height / 6) * 5     // Center of Bottom lane
+            ];
+
+            // Set initial position on load or resize
+            if (!isPlaying && !isGameOver) {
+                currentPlayerY = laneYCoordinates[playerLane];
+            }
+        }
+        
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Handle clicks & direct lane selection
+        function handleInteraction(clientY) {
+            if (!isPlaying) {
+                if (isGameOver) {
+                    resetGame();
+                } else {
+                    isPlaying = true;
+                    overlayElement.style.display = 'none';
+                }
+                return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const clickY = clientY - rect.top;
+
+            // Determine which lane was tapped and move directly to it
+            if (clickY < lineTopY) {
+                playerLane = 0; // Directly to Top Lane
+            } else if (clickY > lineBottomY) {
+                playerLane = 2; // Directly to Bottom Lane
+            } else {
+                playerLane = 1; // Directly to Middle Lane
+            }
+        }
+
+        container.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            handleInteraction(e.clientY);
+        });
+
+        function resetGame() {
+            score = 0;
+            obstacles = [];
+            playerLane = 1;
+            currentPlayerY = laneYCoordinates[1];
+            spawnTimer = 0;
+            gameSpeed = 5;
+            isGameOver = false;
+            isPlaying = true;
+            scoreElement.textContent = score;
+            overlayElement.style.display = 'none';
+        }
+
+        function update() {
+            // Draw pure black background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw two horizontal white dividing lines
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(0, lineTopY);
+            ctx.lineTo(width, lineTopY);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(0, lineBottomY);
+            ctx.lineTo(width, lineBottomY);
+            ctx.stroke();
+
+            // Screen Wrap-Around Movement Logic:
+            // Calculate shortest path to the target lane Y (including wrapping through the edges)
+            const targetY = laneYCoordinates[playerLane];
+            let diffY = targetY - currentPlayerY;
+
+            // If wrapping around is a shorter distance, use wrap-around logic
+            if (diffY > height / 2) {
+                diffY -= height;
+            } else if (diffY < -height / 2) {
+                diffY += height;
+            }
+
+            // Apply smooth easing
+            currentPlayerY += diffY * 0.22;
+
+            // Wrap player position coordinate around to opposite edge if exceeded
+            if (currentPlayerY < 0) {
+                currentPlayerY += height;
+            } else if (currentPlayerY > height) {
+                currentPlayerY -= height;
+            }
+
+            // Draw player dot (Exactly in horizontal center of the screen)
+            const playerX = width / 2;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(playerX, currentPlayerY, playerRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw visual duplication when wrapping around boundaries to keep look smooth
+            if (currentPlayerY < playerRadius) {
+                ctx.beginPath();
+                ctx.arc(playerX, currentPlayerY + height, playerRadius, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (currentPlayerY > height - playerRadius) {
+                ctx.beginPath();
+                ctx.arc(playerX, currentPlayerY - height, playerRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            if (isPlaying && !isGameOver) {
+                // Spawn red squares from the right side
+                spawnTimer++;
+                if (spawnTimer >= spawnInterval) {
+                    const lane = Math.floor(Math.random() * 3);
+                    obstacles.push({
+                        lane: lane,
+                        x: width + obstacleSize,
+                        passed: false
+                    });
+                    spawnTimer = 0;
+                    spawnInterval = Math.max(35, 60 - Math.floor(score / 4));
+                }
+
+                // Update and draw obstacles
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    const obs = obstacles[i];
+                    obs.x -= gameSpeed;
+
+                    const obsY = laneYCoordinates[obs.lane];
+
+                    // Draw Red Square
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(obs.x - obstacleSize / 2, obsY - obstacleSize / 2, obstacleSize, obstacleSize);
+
+                    // Collision checking using continuous smooth player Y coordinate
+                    const distX = Math.abs(obs.x - playerX);
+                    const distY = Math.abs(obsY - currentPlayerY);
+                    
+                    const collisionLimitX = (obstacleSize / 2) + playerRadius;
+                    const collisionLimitY = (obstacleSize / 2) + playerRadius;
+
+                    // Normal collision and wrapped boundary collision checking
+                    const collidesNormal = (distX < collisionLimitX && distY < collisionLimitY);
+                    const collidesWrappedTop = (distX < collisionLimitX && Math.abs(obsY - (currentPlayerY + height)) < collisionLimitY);
+                    const collidesWrappedBottom = (distX < collisionLimitX && Math.abs(obsY - (currentPlayerY - height)) < collisionLimitY);
+
+                    if (collidesNormal || collidesWrappedTop || collidesWrappedBottom) {
+                        isGameOver = true;
+                        isPlaying = false;
+                        overlayElement.innerHTML = 'Game Over<br>Tap any section to Restart';
+                        overlayElement.style.display = 'block';
+                    }
+
+                    // Score point when obstacle passes the player
+                    if (!obs.passed && obs.x < playerX - playerRadius) {
+                        obs.passed = true;
+                        score++;
+                        scoreElement.textContent = score;
+                        gameSpeed += 0.2;
+                    }
+
+                    // Clean up off-screen obstacles
+                    if (obs.x + obstacleSize < 0) {
+                        obstacles.splice(i, 1);
+                    }
+                }
+            } else if (isGameOver) {
+                // Static render of obstacles on Game Over
+                for (let i = 0; i < obstacles.length; i++) {
+                    const obs = obstacles[i];
+                    const obsY = laneYCoordinates[obs.lane];
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(obs.x - obstacleSize / 2, obsY - obstacleSize / 2, obstacleSize, obstacleSize);
+                }
+            }
+
+            requestAnimationFrame(update);
+        }
+
+        // Initialize position on load
+        currentPlayerY = laneYCoordinates[playerLane];
+        update();
+    </script>
+</body>
+</html>
